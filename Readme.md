@@ -16,7 +16,7 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
    - *output-format*: file format (ttl, nt, rdf/xml ...)
 
 4. **Configuration - IFC to RDF converter ([IFC-converter](https://github.com/cramonell/ifcowl/tree/main/IFC-converter))**:
-   - *ifc-file-path*: path of the input IFC file (IFC4X3_Add2, IFC4_Add1, IFC2X3_TC1)
+   - *ifc-file-path*: path of the input IFC file
    - *rdf-ouput*:
         - *output-path*: path were the output file will be saved
         - *output-name*: name that will be used for the output graph file, the output geometry file, and will be appended to the base url
@@ -25,7 +25,7 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
     - *geometry-ouput*:
         - *output-path*: path were the output file will be saved
         - *convert*: whether the geometry should be included or not (true/flase)
-        - *in-graph*: if convert = "true", whether the geometry should be included in the graph (Conforming to IfcOwl Ontology)
+        - *in-graph*: if convert = "true", whether the geometry should be included in the graph (Conforming to IfcOwl Ontology) (true/flase)
         - *ouput-format*: if in-graph = "false", output geometry file format ( .ifc, .glb, .obj) --> NOT IMPLEMENTED, now only .ifc
         - *split*: if in-graph is "false", whether the geomtry of each is stored in a different file (true/flase)--> NOT IMPLEMENTED
    - *filters*:  (entities that won't be included in the  conversion process)
