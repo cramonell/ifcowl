@@ -10,12 +10,12 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
 2. **Usage**:
    - For both converters jus  run the script  either from the command line or from your prefered code editor. Each converter use a config.json file (explained below).
   
-3. **Configuration - IFCowl generator ([beo-gen](https://github.com/cramonell/beo/tree/main/beo-gen))**:
+3. **Configuration - IFCowl generator ([ifcowl-gen](https://github.com/cramonell/ifcowl/tree/main/ifcowl-gen))**:
    - *ifc-schema*: IFC schema version from which to generate the ontology
    - *output-path*: path were the output file will be saved
    - *output-format*: file format (ttl, nt, rdf/xml ...)
 
-4. **Configuration - IFC to RDF converter ([IFC-converter](https://github.com/cramonell/beo/tree/main/IFC-converter))**:
+4. **Configuration - IFC to RDF converter ([IFC-converter](https://github.com/cramonell/ifcowl/tree/main/IFC-converter))**:
    - *ifc-file-path*: path of the input IFC file (IFC4X3_Add2, IFC4_Add1, IFC2X3_TC1)
    - *rdf-ouput*:
         - *output-path*: path were the output file will be saved
