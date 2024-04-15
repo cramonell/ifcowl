@@ -1,0 +1,5 @@
+{
+    "ifc-schema": "IFC4X3_Add2",
+    "output-path":"./",
+    "output-format":"ttl"
+}
