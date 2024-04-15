@@ -28,7 +28,7 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
         - *in-graph*: if convert = "true", whether the geometry should be included in the graph (Conforming to IfcOwl Ontology)
         - *ouput-format*: if in-graph = "false", output geometry file format ( .ifc, .glb, .obj) --> NOT IMPLEMENTED, now only .ifc
         - *split*: if in-graph is "false", whether the geomtry of each is stored in a different file (true/flase)--> NOT IMPLEMENTED
-   - *filters*:
+   - *filters*:  (entities that won't be included in the  conversion process)
         - *entities*: ifc entity  name list
         - *core*: entity groups in the ifc core layer
         - *shared*: entity groups in the ifc shared layer
