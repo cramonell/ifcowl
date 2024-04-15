@@ -30,10 +30,12 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
         - *split*: if in-graph is "false", whether the geomtry of each is stored in a different file (true/flase)--> NOT IMPLEMENTED
    - *filters*:
         - *entities*: ifc entity  name list
-        - *core*: entity groupsin the ifc core layer
-        - *shared*: entity groupsin the ifc shared layer
-        - *domain*: entity groupsin the ifc domain layer
-        - *resource*: entity groupsin the ifc resource layer
+        - *core*: entity groups in the ifc core layer
+        - *shared*: entity groups in the ifc shared layer
+        - *domain*: entity groups in the ifc domain layer
+        - *resource*: entity groups in the ifc resource layer
+
+        check the [structure folder](https://github.com/cramonell/ifcowl/tree/main/IFC-converter/schema_structure)
         ![alt text](ifc-layers.png)
         
         
