@@ -132,6 +132,25 @@ def get_attr_object_property(entity, attr_name):
     result  =  [item[0] for item in results]
     return result[0]
 
+# gets object property uris with label X of the entity class and its supertypes
+def get_attributes(entity): 
+    attr_query = """
+        SELECT ?property ?label WHERE {{
+            {{ ?property rdfs:domain ?superclass .
+            <{}> rdfs:subClassOf* ?superclass .
+            ?property rdfs:label ?label}}
+            UNION
+            {{ ?property rdfs:domain <{}> .
+            ?property rdfs:label ?label}}
+        }}""".format(entity,entity)
+    
+    # Execute the query
+    results = ifc_graph.query(attr_query)
+    # Print the results
+    result = {}
+    for item in results:
+        result[str(item[1])]=item[0]
+    return result
 
 # Instantiate  empty  graph for the asset
 g  = Graph()
@@ -501,7 +520,7 @@ def create_aggregation_type(instance_uri, object_property_uri, declared_type, at
     else: pass
 
 def create_entity(entity)-> URIRef:
-    print(len(created_entities.keys()))
+    
     
     # get the  IFC definition of the entity
     entity_schema = schema.declaration_by_name(entity.is_a())
@@ -511,7 +530,7 @@ def create_entity(entity)-> URIRef:
 
     entity_uri = IFC[entity_name]
     instance_uri = INST[instance_name]
-
+    print(len(created_entities.keys()), instance_uri)
     if instance_uri not in created_entities.keys(): 
         created_entities[instance_uri] = []
 
@@ -519,6 +538,8 @@ def create_entity(entity)-> URIRef:
         g.add((instance_uri, RDF.type, entity_uri))
         #create instance attributes
         attr_count = entity_schema.attribute_count()
+
+        attrs = get_attributes(entity_uri)
 
         for i in range(attr_count):
 
@@ -541,7 +562,7 @@ def create_entity(entity)-> URIRef:
                 attr_type = attr.type_of_attribute()
                 
                 #get object property uri
-                object_property_uri = get_attr_object_property(entity_uri, attr_name)
+                object_property_uri = attrs[attr_name]
 
                 if attr_type.as_simple_type():
                        
@@ -575,7 +596,7 @@ def create_entity(entity)-> URIRef:
         for inv_attr  in inverse_attributes:
 
             inv_attr_name = inv_attr.name()
-            inv_attr_uri = get_attr_object_property(entity_uri, inv_attr_name)
+            inv_attr_uri = attrs[inv_attr_name]
 
             content = getattr(entity, inv_attr.name())
             
