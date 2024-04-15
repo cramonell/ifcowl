@@ -29,8 +29,13 @@ BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/i
         - *ouput-format*: if in-graph = "false", output geometry file format ( .ifc, .glb, .obj) --> NOT IMPLEMENTED, now only .ifc
         - *split*: if in-graph is "false", whether the geomtry of each is stored in a different file (true/flase)--> NOT IMPLEMENTED
    - *filters*:
-        - *entities*: 
-        - *attributes*:
+        - *entities*: ifc entity  name list
+        - *core*: entity groupsin the ifc core layer
+        - *shared*: entity groupsin the ifc shared layer
+        - *domain*: entity groupsin the ifc domain layer
+        - *resource*: entity groupsin the ifc resource layer
+        ![alt text](ifc-layers.png)
+        
         
 
 5. **License**:
