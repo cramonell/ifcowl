@@ -55,12 +55,9 @@ def create_list(ifc_type, entity_type, bound1, bound2):
     if bound1 != 0:
         g.add((ifc_type, RDFS.subClassOf, create_list_restriction(bound1, entity_type)))
     if bound2  != -1:
-        div = entity_type.split('_')
-        if len(div)>2:
-            entity_type = URIRef(div[0] + '_'+ div[1] +'_EmptyList')
-        else:
-            entity_type = URIRef(div[0] +'_EmptyList')
-        g.add((ifc_type, RDFS.subClassOf, create_empty_list_restriction(bound2,entity_type)))
+        uri_str = str(entity_type)
+        empty_entity_type = URIRef(uri_str[:-len('_List')] + '_EmptyList') if uri_str.endswith('_List') else URIRef(uri_str + '_EmptyList')
+        g.add((ifc_type, RDFS.subClassOf, create_empty_list_restriction(bound2, empty_entity_type)))
 
 def create_named_type_list_entity(ifctype):
     name =ifctype + '_List'
@@ -382,7 +379,32 @@ def add_aggregation_type_attr(entity_name, attr_name, type_of_attr,optional):
             g.add((bnode_max_cardinality, OWL.onClass, IFC[set_enitity_name]))
         
     elif type_of_aggregation == type_of_attr.bag_type:
-        pass
+        # BAG allows duplicates; OWL cardinality restrictions are identical to SET
+        bnode_value = BNode()
+        bnode_min_cardinality = BNode()
+        bnode_max_cardinality = BNode()
+
+        set_enitity_name = aggregation_element_type.declared_type().name()
+
+        g.add((IFC[attr_name], RDFS.range, IFC[set_enitity_name]))
+        g.add((IFC[entity_name], RDFS.subClassOf, bnode_value))
+        g.add((bnode_value, RDF.type, OWL.Restriction))
+        g.add((bnode_value, OWL.onProperty, IFC[attr_name]))
+        g.add((bnode_value, OWL.allValuesFrom, IFC[set_enitity_name]))
+
+        if bound1 > 0 and not optional:
+            g.add((IFC[entity_name], RDFS.subClassOf, bnode_min_cardinality))
+            g.add((bnode_min_cardinality, RDF.type, OWL.Restriction))
+            g.add((bnode_min_cardinality, OWL.onProperty, IFC[attr_name]))
+            g.add((bnode_min_cardinality, OWL.minQualifiedCardinality, Literal(bound1, datatype=XSD.nonNegativeInteger)))
+            g.add((bnode_min_cardinality, OWL.onClass, IFC[set_enitity_name]))
+
+        if bound2 != -1:
+            g.add((IFC[entity_name], RDFS.subClassOf, bnode_max_cardinality))
+            g.add((bnode_max_cardinality, RDF.type, OWL.Restriction))
+            g.add((bnode_max_cardinality, OWL.onProperty, IFC[attr_name]))
+            g.add((bnode_max_cardinality, OWL.maxQualifiedCardinality, Literal(bound2, datatype=XSD.nonNegativeInteger)))
+            g.add((bnode_max_cardinality, OWL.onClass, IFC[set_enitity_name]))
 
 
 # Create a new graph
@@ -424,24 +446,21 @@ g.bind('dce', DCE)
 
 #add ontology header triples
 g.add((ref, RDF.type, OWL.Ontology))
-g.add((ref, DCE.creator, Literal('Pieter Pauwels (pipauwel.pauwels@ugent.be)')))
-g.add((ref, DCE.creator, Literal('Walter Terkaj (walter.terkaj@itia.cnr.it)')))
-g.add((ref, DCE.creator, Literal('Carlos Ramonell Cazador (carlos.ramonell@upc.edu)')))
-g.add((ref, DCE.contributor, Literal('Jakob Beetz (j.beetz@tue.nl)')))
-g.add((ref, DCE.contributor, Literal('María Poveda Villalón (mpoveda@fi.upm.es)')))
-g.add((ref, DCE.contributor, Literal('Aleksandra Sojic (aleksandra.sojic@itia.cnr.it)')))
+for creator in params.get('creators', []):
+    g.add((ref, DCE.creator, Literal(creator)))
+for contributor in params.get('contributors', []):
+    g.add((ref, DCE.contributor, Literal(contributor)))
 g.add((ref, DCE.date, Literal(datetime.datetime.today().strftime('%Y/%m/%d'))))
 g.add((ref, DCE.title, Literal(schema_name.upper())))
-g.add((ref, DCE.description, Literal("OWL ontology for the IFC conceptual data schema and exchange file format for Building Information Model (BIM) data. Release 4X3 ADD2.")))
+g.add((ref, DCE.description, Literal(f"OWL ontology for the IFC conceptual data schema and exchange file format for Building Information Model (BIM) data. Schema: {schema_name.upper()}.")))
 g.add((ref, DCE.identifier, Literal(schema_name.upper())))
 g.add((ref, DCE.language, Literal('en')))
-g.add((ref, DCE.abstract, Literal(f"This ifcOWL ontology is automatically generated from the EXPRESS schema '{schema_name.upper()}' using the 'IFCExpress2OWL' converter developed by Carlos Ramonell (carlos.ramonell@upc.edu). The ontology is identical to the ontology that is generated from the EXPRESS schema '{schema_name.upper()}.exp' using the 'IFC-to-RDF' converter developed by Pieter Pauwels (pipauwel.pauwels@ugent.be)")))
+g.add((ref, DCE.abstract, Literal(f"This ifcOWL ontology is automatically generated from the IFC EXPRESS schema '{schema_name.upper()}' using IFCExpress2OWL (https://github.com/cramonell/ifcowl).")))
 g.add((ref, VANN.preferredNamespacePrefix, Literal('ifc')))
 g.add((ref, VANN.preferredNamespaceUri, Literal(ref)))
 g.add((ref, OWL.imports, URIRef('https://w3id.org/express')))
 g.add((ref, OWL.versionIRI, ref))
 g.add((ref, OWL.versionInfo, Literal('1.0')))
-g.add((ref, OWL.priorVersion, Literal('https://pi.pauwel.be/evoc/ifc_W3ID/20151211/IFC4_ADD1/index.html')))
 g.add((ref, CC.license, Literal('http://creativecommons.org/licenses/by/3.0/')))
 
 # anotation properties
@@ -585,7 +604,9 @@ for declaration in aggregation_types:
         create_set(IFC[name], IFC[list_enitity_name],bound1, bound2)
 
     elif type_of_aggregation == declared_type.bag_type:
-        pass
+        # BAG allows duplicates; OWL class restriction is identical to SET
+        list_enitity_name = aggregation_element_type.declared_type().name()
+        create_set(IFC[name], IFC[list_enitity_name], bound1, bound2)
 
     else: pass
 

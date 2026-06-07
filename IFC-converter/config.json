@@ -1,20 +1,21 @@
-{   
-    "ifc-file-path": "D:/UPC_PhD/01.Ashvin/DEV/test/ontologies/ifc-ontology/examples/LLobregat_20240221.ifc",
-    "rdf-output":{
-        "output-path": "./IFC-converter/tests/",
-        "output-name": "test",
+{
+    "ifc-file-path": "",
+    "rdf-output": {
+        "output-path": "../tests/",
+        "output-name": "",
         "output-format": "ttl",
-        "base-url": "http://www.carlos-server.test/assets/"
+        "base-url": "https://example.org/assets/"
     },
-    "geometry-output":{
-        "convert": true,
-        "in-graph":  false,
-        "output-format": "ifc",
+    "geometry-output": {
+        "convert": false,
+        "in-graph": false,
+        "output-format": "glb",
         "split": false,
-        "output-path":"./IFC-converter/tests/"
+        "output-path": "../tests/",
+        "converter": ""
     },
-    "filters":{
-        "resource": [ ],
+    "filters": {
+        "resource": [],
         "shared": [],
         "domain": [],
         "core": [],

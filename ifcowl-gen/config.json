@@ -1,5 +1,9 @@
 {
     "ifc-schema": "IFC4X3_Add2",
-    "output-path":"./",
-    "output-format":"ttl"
+    "output-path": "./",
+    "output-format": "ttl",
+    "creators": [
+        "Your Name (your@email.com)"
+    ],
+    "contributors": []
 }

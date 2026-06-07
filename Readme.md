@@ -1,47 +1,145 @@
-BEO stands for [Built Element Ontology](https://cramonell.github.io/beo/actual/index-en.html). It is an ontology inspired by  the entities of the [Industry Foundation Classes](https://ifc43-docs.standards.buildingsmart.org/) schema(IFC) that represent built elements and spatial configurations in the built environment. In this repository you will find two converters: a schema converter from IFC (express) to BEO (owl) and a IFC-to-RDF file converter . The file converter also uses ontologies for managing geometrical information: [FOG](https://mathib.github.io/fog-ontology/), [GOM](https://mathib.github.io/gom-ontology/#) and [OMG](https://w3id.org/omg#).
+# ifcowl — IFC to OWL Conversion Tools
 
+A pair of Python tools for working with the [IFC](https://www.buildingsmart.org/standards/bsi-standards/industry-foundation-classes/) (Industry Foundation Classes) standard in the semantic-web ecosystem, following the [ifcOWL](https://technical.buildingsmart.org/standards/ifc/ifc-formats/ifcowl/) ontology conventions.
 
-## How to Use
-1. **Installation**:
-   - Install python in your machine
-   - clone this repository
-   - Install requirements : [ifcopenshell](https://ifcopenshell.org/), [rdflib](https://rdflib.readthedocs.io/en/stable/index.html)
+| Tool | Folder | What it does |
+|---|---|---|
+| **IFCExpress2OWL** | `ifcowl-gen/` | Generates an OWL ontology from an IFC EXPRESS schema definition |
+| **IFC2RDF** | `IFC-converter/` | Converts an IFC building model instance file into an RDF graph conforming to ifcOWL |
 
-2. **Usage**:
-   - For both converters jus  run the script  either from the command line or from your prefered code editor. Each converter use a config.json file (explained below).
-  
-3. **Configuration - IFCowl generator ([ifcowl-gen](https://github.com/cramonell/ifcowl/tree/main/ifcowl-gen))**:
-   - *ifc-schema*: IFC schema version from which to generate the ontology
-   - *output-path*: path were the output file will be saved
-   - *output-format*: file format (ttl, nt, rdf/xml ...)
+Both tools use [ifcopenshell](https://ifcopenshell.org/) to parse IFC schemas and files, and [rdflib](https://rdflib.readthedocs.io/) to build and serialise RDF graphs.
 
-4. **Configuration - IFC to RDF converter ([IFC-converter](https://github.com/cramonell/ifcowl/tree/main/IFC-converter))**:
-   - *ifc-file-path*: path of the input IFC file
-   - *rdf-ouput*:
-        - *output-path*: path were the output file will be saved
-        - *output-name*: name that will be used for the output graph file, the output geometry file, and will be appended to the base url
-        - *ouput-format*: file format (ttl, nt, rdf/xml ...)
-        - *base-url*: base url for the graph instances
-    - *geometry-ouput*:
-        - *output-path*: path were the output file will be saved
-        - *convert*: whether the geometry should be included or not (true/flase)
-        - *in-graph*: if convert = "true", whether the geometry should be included in the graph (Conforming to IfcOwl Ontology) (true/flase)
-        - *ouput-format*: if in-graph = "false", output geometry file format ( .ifc, .glb, .obj) --> NOT IMPLEMENTED, now only .ifc
-        - *split*: if in-graph is "false", whether the geomtry of each is stored in a different file (true/flase)--> NOT IMPLEMENTED
-   - *filters*:  (entities that won't be included in the  conversion process)
-        - *entities*: ifc entity  name list
-        - *core*: entity groups in the ifc core layer
-        - *shared*: entity groups in the ifc shared layer
-        - *domain*: entity groups in the ifc domain layer
-        - *resource*: entity groups in the ifc resource layer
+---
 
-        check the [structure folder](https://github.com/cramonell/ifcowl/tree/main/IFC-converter/schema_structure)
-        ![alt text](ifc-layers.png)
-        
-        
+## Requirements
 
-5. **License**:
-   - This project is licensed under the GNU General Public License (GNU GPL). You can find the full text of the license in the LICENSE.txt file.
+- Python ≥ 3.9
+- [ifcopenshell](https://ifcopenshell.org/) ≥ 0.7
+- [rdflib](https://rdflib.readthedocs.io/) == 7.0.0
 
+```bash
+pip install -r requirements.txt
+```
 
+---
 
+## IFC2RDF — Convert an IFC file to RDF
+
+Reads an IFC instance file and produces an RDF graph (Turtle, N-Triples, or RDF/XML) whose individuals, types, and properties follow the ifcOWL ontology.
+
+### Usage
+
+```bash
+cd IFC-converter/
+python IFC2RDF.py path/to/model.ifc [--log-level LEVEL]
+```
+
+| Argument | Description | Default |
+|---|---|---|
+| `input` | Path to the IFC file. Overrides `ifc-file-path` in `config.json`. | — |
+| `--log-level` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
+
+**Example INFO output:**
+```
+2024-01-15 10:23:01 [INFO] File   : model.ifc  (1024000 bytes)
+2024-01-15 10:23:01 [INFO] Schema : IFC4 → https://w3id.org/ifc/IFC4#
+2024-01-15 10:23:01 [INFO] Output : ../tests/model.ttl
+2024-01-15 10:23:01 [INFO] Load   : 0.21 s
+2024-01-15 10:23:03 [INFO] Process: 2.14 s  (1840 entities, 18730 triples)
+2024-01-15 10:23:03 [INFO] Serial : 0.31 s  → ../tests/model.ttl
+2024-01-15 10:23:03 [INFO] Total  : 2.66 s
+2024-01-15 10:23:03 [INFO] ────────────────────────────────────────────────────────────
+2024-01-15 10:23:03 [INFO] File total     : 5240 entities
+2024-01-15 10:23:03 [INFO] Filtered       : 3400 (excluded by config)
+2024-01-15 10:23:03 [INFO] Top-level sent : 1840
+2024-01-15 10:23:03 [INFO] Total created  : 1840 (incl. referenced entities)
+2024-01-15 10:23:03 [INFO] Triples        : 18730
+```
+
+Use `--log-level DEBUG` to see a per-entity-type breakdown and a missing-entity audit after conversion.
+
+### Configuration — `IFC-converter/config.json`
+
+```jsonc
+{
+    "ifc-file-path": "",              // Path to IFC file. Leave empty and supply via CLI.
+    "rdf-output": {
+        "output-path": "../tests/",   // Directory where the .ttl output is saved
+        "output-name": "",            // Output filename stem. Leave empty to auto-derive from IFC filename.
+        "output-format": "ttl",       // Serialisation format: ttl | nt | rdf/xml
+        "base-url": "https://example.org/assets/"  // Base URL for instance URIs in the graph
+    },
+    "geometry-output": {
+        "convert": false,             // If true, add geometry metadata triples to the graph
+        "in-graph": false,            // If true, embed geometry in the RDF graph (ifcOWL style)
+        "output-format": "glb",       // Geometry file format: ifc | obj | glb | gltf | stl | ply | collada
+        "split": false,               // If true, one file per element (named by GlobalId)
+        "output-path": "../tests/",
+        "converter": ""               // Optional: path to external CLI converter (e.g. "IfcConvert").
+                                      // If empty, uses ifcopenshell.geom + trimesh (Python-native).
+    },
+    "filters": {
+        "resource": [],   // IFC resource-layer group names to exclude (see schema_structure/)
+        "shared":   [],   // IFC shared-layer group names to exclude
+        "domain":   [],   // IFC domain-layer group names to exclude
+        "core":     [],   // IFC core-layer group names to exclude
+        "entities": []    // Specific IFC entity type names to exclude (e.g. "IfcWall")
+    }
+}
+```
+
+Refer to [`IFC-converter/schema_structure/`](IFC-converter/schema_structure/) for available group names.
+
+![IFC layers diagram](ifc-layers.png)
+
+---
+
+## IFCExpress2OWL — Generate an OWL ontology from an IFC schema
+
+Reads an IFC EXPRESS schema (via ifcopenshell) and produces a corresponding OWL ontology in Turtle, N-Triples, or RDF/XML.
+
+### Usage
+
+```bash
+cd ifcowl-gen/
+python IFCExpress2OWL.py
+```
+
+Schema version and output are controlled entirely by `config.json`.
+
+### Configuration — `ifcowl-gen/config.json`
+
+```jsonc
+{
+    "ifc-schema": "IFC4X3_Add2",    // ifcopenshell schema name (see Supported schemas below)
+    "output-path": "./",             // Directory where the output file is saved
+    "output-format": "ttl",          // Serialisation format: ttl | nt | rdf/xml
+    "creators": [
+        "Your Name (your@email.com)" // Appears in dce:creator of the generated ontology
+    ],
+    "contributors": []               // Appears in dce:contributor
+}
+```
+
+---
+
+## Supported IFC schemas
+
+Both tools detect the IFC schema version automatically and resolve the corresponding w3id.org namespace URI. An unrecognised schema name produces a warning and falls back to `https://w3id.org/ifc/<SCHEMA_NAME>#`.
+
+| IFC schema variant(s) | w3id.org namespace |
+|---|---|
+| `IFC4X3`, `IFC4X3_ADD2`, `IFC4X3_RC3` | `https://w3id.org/ifc/IFC4X3_ADD2#` |
+| `IFC4` | `https://w3id.org/ifc/IFC4#` |
+| `IFC4_ADD1` | `https://w3id.org/ifc/IFC4_ADD1#` |
+| `IFC2X3`, `IFC2X3_TC1` | `https://w3id.org/ifc/IFC2X3_TC1#` |
+| `IFC2X3_FINAL` | `https://w3id.org/ifc/IFC2X3_Final#` |
+
+---
+
+---
+
+## License
+
+This project is licensed under the GNU General Public License (GNU GPL).  
+See [`LICENSE.txt`](LICENSE.txt) for the full text.
