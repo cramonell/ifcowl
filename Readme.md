@@ -92,9 +92,14 @@ Use `--log-level DEBUG` to see a per-entity-type breakdown and a missing-entity 
         "apply-materials": false,     // If true, extract IFC material colours and apply them to geometry files.
                                       // Supported: glb, gltf, obj, collada, ply. Not supported: stl, ifc.
                                       // The material name is also recorded as a label in the RDF graph.
-        "output-path": "../tests/"    // Directory where geometry files are written
+        "output-path": "../tests/",   // Directory where geometry files are written
                                       // Note: when output-format is "ifc", no conversion runs; the original IFC
                                       // file is used directly as the geometry reference.
+        "geometry-base-url": ""       // Base URL for geometry file URIs in the RDF graph.
+                                      //   (empty) — uses absolute file:// URIs resolved from output-path.
+                                      //   "https://example.org/geom" — URIs become https://example.org/geom/{filename}.
+                                      // Set this when geometry files are served over HTTP so the RDF URIs are
+                                      // dereferenceable. Leave empty for local use.
     },
     "filters": {
         "resource": [],   // IFC resource-layer group names to exclude (see schema_structure/)
@@ -143,11 +148,13 @@ inst:geom_105
 # Geometry state: the current file reference and mesh statistics
 inst:geomState_105
     a omg:CurrentGeometryState ;
-    fog:asGltf       "../tests/split-geom/0qxeh3NRjCJQ6oBQBmgYRP.glb"^^xsd:anyURI ;
+    fog:asGltf       "https://example.org/geom/0qxeh3NRjCJQ6oBQBmgYRP.glb"^^xsd:anyURI ;
     gom:hasVertices  1248 ;
     gom:hasFaces     416 ;
     gom:hasFileSize  38400 .
 ```
+
+The geometry file URI is controlled by `geometry-base-url`. When set to `"https://example.org/geom"`, URIs take the form `https://example.org/geom/{filename}` as shown above. When left empty, the converter writes an absolute `file://` URI resolved from the local output path.
 
 Vertex/face counts and file size are only available in split mode (see below), where each element has its own geometry file.
 

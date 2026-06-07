@@ -901,18 +901,32 @@ def _add_geospatial_triples(ifc_file_obj, world_cs_uri):
                      lat, lon, elev)
 
 
-def _add_geometry_triples(entity, file_uri, fmt, mesh=None, mat_info=None, world_cs_uri=None):
+def _path_to_geom_uri(file_path, base_url):
+    """Return a proper URI for a geometry file.
+
+    If base_url is set, the URI is constructed as base_url + basename (suitable
+    for files served over HTTP). Otherwise an absolute file:// URI is used.
+    """
+    if base_url:
+        return base_url.rstrip('/') + '/' + os.path.basename(file_path)
+    return pathlib.Path(file_path).resolve().as_uri()
+
+
+def _add_geometry_triples(entity, file_path, fmt, mesh=None, mat_info=None,
+                          world_cs_uri=None, geom_base_url=None):
     """Write OMG/FOG/GOM triples for one entity using the three-node OMG pattern."""
     fog_prop       = FOG_PROPERTY.get(fmt, FOG['asIfc'])
     entity_uri     = INST[entity.is_a() + '_' + str(entity.id())]
     geom_uri       = INST['geom_'      + str(entity.id())]
     geom_state_uri = INST['geomState_' + str(entity.id())]
 
+    geom_uri_str = _path_to_geom_uri(file_path, geom_base_url)
+
     g.add((entity_uri,     OMG.hasGeometry,     geom_uri))
     g.add((geom_uri,       RDF.type,             GOM.MeshGeometry))
     g.add((geom_uri,       OMG.hasGeometryState, geom_state_uri))
     g.add((geom_state_uri, RDF.type,             OMG.CurrentGeometryState))
-    g.add((geom_state_uri, fog_prop,             Literal(file_uri, datatype=XSD.anyURI)))
+    g.add((geom_state_uri, fog_prop,             Literal(geom_uri_str, datatype=XSD.anyURI)))
 
     if hasattr(entity, 'GlobalId'):
         g.add((geom_uri, FOG['hasIfcId-guid'], Literal(entity.GlobalId, datatype=XSD.string)))
@@ -928,13 +942,13 @@ def _add_geometry_triples(entity, file_uri, fmt, mesh=None, mat_info=None, world
                Literal(len(mesh.vertices), datatype=XSD.nonNegativeInteger)))
         g.add((geom_state_uri, GOM.hasFaces,
                Literal(len(mesh.faces), datatype=XSD.nonNegativeInteger)))
-        if os.path.exists(file_uri):
+        if os.path.exists(file_path):
             g.add((geom_state_uri, GOM.hasFileSize,
-                   Literal(os.path.getsize(file_uri), datatype=XSD.nonNegativeInteger)))
+                   Literal(os.path.getsize(file_path), datatype=XSD.nonNegativeInteger)))
 
 def export_geometry_batch(ifc_file_obj, ifc_path, entities_with_repr,
                           fmt, output_path, output_name,
-                          apply_materials=False, world_cs_uri=None):
+                          apply_materials=False, world_cs_uri=None, geom_base_url=None):
     """Export all element geometry to one file; write RDF triples for each entity."""
     os.makedirs(output_path, exist_ok=True)
     out_file = os.path.join(output_path, output_name + '.' + fmt)
@@ -963,11 +977,11 @@ def export_geometry_batch(ifc_file_obj, ifc_path, entities_with_repr,
         name = _name_cache.get(entity.id())
         _add_geometry_triples(entity, out_file, fmt,
                               mat_info={'name': name} if name else None,
-                              world_cs_uri=world_cs_uri)
+                              world_cs_uri=world_cs_uri, geom_base_url=geom_base_url)
     log.info("Geometry (batch): %d entities → %s", len(entities_with_repr), out_file)
 
 def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
-                          apply_materials=False, world_cs_uri=None):
+                          apply_materials=False, world_cs_uri=None, geom_base_url=None):
     """Export geometry for one entity to its own file; write RDF triples."""
     if not hasattr(entity, 'GlobalId'):
         return
@@ -994,7 +1008,7 @@ def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
             return
 
     _add_geometry_triples(entity, out_file, fmt, mesh=mesh, mat_info=mat_info,
-                          world_cs_uri=world_cs_uri)
+                          world_cs_uri=world_cs_uri, geom_base_url=geom_base_url)
 
 
 # --- Main conversion loop ---
@@ -1023,11 +1037,12 @@ _t2 = time.perf_counter()
 log.info("Process: %.2f s  (%d entities, %d triples)", _t2 - _t1, _main_loop_count, len(g))
 
 # --- Geometry export (post-loop) ---
-_geom_cfg  = params['geometry-output']
-_geom_fmt  = _geom_cfg['output-format']
-_geom_path = _geom_cfg['output-path']
-_geom_split = _geom_cfg.get('split', False)
-_geom_mat   = _geom_cfg.get('apply-materials', False)
+_geom_cfg      = params['geometry-output']
+_geom_fmt      = _geom_cfg['output-format']
+_geom_path     = _geom_cfg['output-path']
+_geom_split    = _geom_cfg.get('split', False)
+_geom_mat      = _geom_cfg.get('apply-materials', False)
+_geom_base_url = _geom_cfg.get('geometry-base-url', '').rstrip('/')
 
 if _geom_cfg['convert'] and not _geom_cfg['in-graph']:
     _world_cs_uri = INST['worldCoordSys']
@@ -1041,11 +1056,13 @@ if _geom_cfg['convert'] and not _geom_cfg['in-graph']:
     if _geom_split:
         for _e in _repr_entities:
             export_geometry_split(file, file_path, _e, _geom_fmt, _geom_path,
-                                  apply_materials=_geom_mat, world_cs_uri=_world_cs_uri)
+                                  apply_materials=_geom_mat, world_cs_uri=_world_cs_uri,
+                                  geom_base_url=_geom_base_url or None)
     else:
         export_geometry_batch(file, file_path, _repr_entities,
                               _geom_fmt, _geom_path, asset_name,
-                              apply_materials=_geom_mat, world_cs_uri=_world_cs_uri)
+                              apply_materials=_geom_mat, world_cs_uri=_world_cs_uri,
+                              geom_base_url=_geom_base_url or None)
 
 # --- Serialise ---
 g.serialize(destination=save_path + '.' + output_format, format='turtle')

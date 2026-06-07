@@ -12,7 +12,8 @@
         "output-format": "glb",
         "split": false,
         "apply-materials": false,
-        "output-path": "../tests/"
+        "output-path": "../tests/",
+        "geometry-base-url": ""
     },
     "filters": {
         "resource": [],
