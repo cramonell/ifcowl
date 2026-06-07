@@ -91,7 +91,6 @@ Use `--log-level DEBUG` to see a per-entity-type breakdown and a missing-entity 
                                       // If true: one file per element, named by its IFC GlobalId (split mode).
         "apply-materials": false,     // If true, extract IFC material colours and apply them to geometry files.
                                       // Supported: glb, gltf, obj, collada, ply. Not supported: stl, ifc.
-                                      // The material name is also recorded as a label in the RDF graph.
         "output-path": "../tests/",   // Directory where geometry files are written
                                       // Note: when output-format is "ifc", no conversion runs; the original IFC
                                       // file is used directly as the geometry reference.
@@ -137,13 +136,12 @@ Each IFC element with a geometric representation gets three linked nodes in the 
 inst:IfcWall_105
     omg:hasGeometry  inst:geom_105 .
 
-# Geometry description: what kind of geometry, which coordinate system, which material
+# Geometry description: what kind of geometry and which coordinate system
 inst:geom_105
     a gom:MeshGeometry ;
-    omg:hasGeometryState      inst:geomState_105 ;
-    fog:hasIfcId-guid         "0qxeh3NRjCJQ6oBQBmgYRP"^^xsd:string ;
-    rdfs:label                "Concrete" ;              # IFC material name (if apply-materials=true)
-    gom:hasCoordinateSystem   inst:worldCoordSys .      # shared coordinate system node
+    omg:hasGeometryState    inst:geomState_105 ;
+    fog:hasIfcId-guid       "0qxeh3NRjCJQ6oBQBmgYRP"^^xsd:string ;
+    gom:hasCoordinateSystem inst:worldCoordSys .
 
 # Geometry state: the current file reference and mesh statistics
 inst:geomState_105
@@ -257,9 +255,7 @@ Large building projects are often split across multiple IFC files — one for th
 
 ### Material colours
 
-When `apply-materials` is `true`, the converter extracts the colour assigned to each face of each element from the IFC material definitions and encodes them in the exported geometry file. Colours are applied per face without interpolation at material boundaries, so elements with multiple materials (e.g. a pipe with insulation) display correctly in viewers that support vertex colours.
-
-The name of the primary material is also recorded as `rdfs:label` on the geometry node in the RDF graph.
+When `apply-materials` is `true`, the converter extracts the colour assigned to each face of each element from the IFC material definitions and encodes them in the exported geometry file. Colours are applied per face without interpolation at material boundaries, so elements with multiple materials (e.g. a pipe with insulation) display correctly in viewers that support vertex colours. Material associations are already present in the RDF graph via the ifcOWL triples (`IfcRelAssociatesMaterial`); no additional material triples are added to the geometry nodes.
 
 ---
 

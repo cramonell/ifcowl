@@ -775,17 +775,6 @@ def _apply_shape_colours(mesh, shape, fmt):
     return coloured
 
 
-def _get_primary_material_name(shape):
-    """Return the primary material name from shape geometry (for RDF rdfs:label)."""
-    try:
-        mats = list(shape.geometry.materials)
-        if mats and mats[0].name:
-            return mats[0].name
-    except Exception:
-        pass
-    return None
-
-
 # --- Georeferencing helpers ---
 
 def _extract_map_conversion(ifc_file_obj):
@@ -912,7 +901,7 @@ def _path_to_geom_uri(file_path, base_url):
     return pathlib.Path(file_path).resolve().as_uri()
 
 
-def _add_geometry_triples(entity, file_path, fmt, mesh=None, mat_info=None,
+def _add_geometry_triples(entity, file_path, fmt, mesh=None,
                           world_cs_uri=None, geom_base_url=None):
     """Write OMG/FOG/GOM triples for one entity using the three-node OMG pattern."""
     fog_prop       = FOG_PROPERTY.get(fmt, FOG['asIfc'])
@@ -930,9 +919,6 @@ def _add_geometry_triples(entity, file_path, fmt, mesh=None, mat_info=None,
 
     if hasattr(entity, 'GlobalId'):
         g.add((geom_uri, FOG['hasIfcId-guid'], Literal(entity.GlobalId, datatype=XSD.string)))
-
-    if mat_info and mat_info.get('name'):
-        g.add((geom_uri, RDFS.label, Literal(mat_info['name'])))
 
     if world_cs_uri is not None:
         g.add((geom_uri, GOM.hasCoordinateSystem, world_cs_uri))
@@ -952,12 +938,13 @@ def export_geometry_batch(ifc_file_obj, ifc_path, entities_with_repr,
     """Export all element geometry to one file; write RDF triples for each entity."""
     os.makedirs(output_path, exist_ok=True)
     out_file = os.path.join(output_path, output_name + '.' + fmt)
-    _name_cache = {}   # entity_id → primary material name for RDF label
 
     if fmt == 'ifc':
         out_file = ifc_path       # the IFC file itself is the geometry source
     else:
         scene = trimesh.Scene()
+        log.info("Geometry (batch): tessellating %d elements ...", len(entities_with_repr))
+        _shape_count = 0
         it = ifcopenshell.geom.iterator(_geom_settings, ifc_file_obj)
         if it.initialize():
             while True:
@@ -965,20 +952,19 @@ def export_geometry_batch(ifc_file_obj, ifc_path, entities_with_repr,
                 mesh = _shape_to_trimesh(shape, fmt)   # axis correction applied here
                 if apply_materials:
                     mesh = _apply_shape_colours(mesh, shape, fmt)
-                    name = _get_primary_material_name(shape)
-                    if name:
-                        _name_cache[shape.id] = name
                 scene.add_geometry(mesh, node_name=str(shape.id))
+                _shape_count += 1
+                if _shape_count % 500 == 0:
+                    log.info("Geometry (batch): tessellated %d shapes ...", _shape_count)
                 if not it.next():
                     break
+        log.info("Geometry (batch): writing %d shapes → %s ...", _shape_count, out_file)
         scene.export(out_file)
 
     for entity in entities_with_repr:
-        name = _name_cache.get(entity.id())
         _add_geometry_triples(entity, out_file, fmt,
-                              mat_info={'name': name} if name else None,
                               world_cs_uri=world_cs_uri, geom_base_url=geom_base_url)
-    log.info("Geometry (batch): %d entities → %s", len(entities_with_repr), out_file)
+    log.info("Geometry (batch): done — %d entities linked", len(entities_with_repr))
 
 def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
                           apply_materials=False, world_cs_uri=None, geom_base_url=None):
@@ -988,7 +974,6 @@ def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
     os.makedirs(output_path, exist_ok=True)
     out_file = os.path.join(output_path, entity.GlobalId + '.' + fmt)
     mesh = None
-    mat_info = None
 
     if fmt == 'ifc':
         out_file = ifc_path
@@ -998,16 +983,13 @@ def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
             mesh = _shape_to_trimesh(shape, fmt)   # axis correction applied here
             if apply_materials:
                 mesh = _apply_shape_colours(mesh, shape, fmt)
-                name = _get_primary_material_name(shape)
-                if name:
-                    mat_info = {'name': name}
             mesh.export(out_file)
         except Exception as e:
             log.warning("Geometry extraction failed for %s#%d: %s",
                         entity.is_a(), entity.id(), e)
             return
 
-    _add_geometry_triples(entity, out_file, fmt, mesh=mesh, mat_info=mat_info,
+    _add_geometry_triples(entity, out_file, fmt, mesh=mesh,
                           world_cs_uri=world_cs_uri, geom_base_url=geom_base_url)
 
 
@@ -1054,10 +1036,14 @@ if _geom_cfg['convert'] and not _geom_cfg['in-graph']:
                       if e.is_a() not in avoid
                       and hasattr(e, 'Representation') and e.Representation]
     if _geom_split:
-        for _e in _repr_entities:
+        _geom_total = len(_repr_entities)
+        log.info("Geometry (split): exporting %d elements ...", _geom_total)
+        for _geom_i, _e in enumerate(_repr_entities, 1):
             export_geometry_split(file, file_path, _e, _geom_fmt, _geom_path,
                                   apply_materials=_geom_mat, world_cs_uri=_world_cs_uri,
                                   geom_base_url=_geom_base_url or None)
+            if _geom_i % 100 == 0:
+                log.info("Geometry (split): %d / %d elements ...", _geom_i, _geom_total)
     else:
         export_geometry_batch(file, file_path, _repr_entities,
                               _geom_fmt, _geom_path, asset_name,
@@ -1065,6 +1051,7 @@ if _geom_cfg['convert'] and not _geom_cfg['in-graph']:
                               geom_base_url=_geom_base_url or None)
 
 # --- Serialise ---
+log.info("Serialising %d triples → %s.%s ...", len(g), save_path, output_format)
 g.serialize(destination=save_path + '.' + output_format, format='turtle')
 _t3 = time.perf_counter()
 log.info("Serial : %.2f s  → %s.%s", _t3 - _t2, save_path, output_format)
