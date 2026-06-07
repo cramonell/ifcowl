@@ -7,7 +7,6 @@ import pathlib
 import argparse
 import logging
 import time
-import subprocess
 import numpy as np
 import trimesh
 
@@ -192,6 +191,7 @@ LIST = Namespace("https://w3id.org/list#")
 OMG = Namespace("http://w3id.org/omg#")
 FOG = Namespace("https://w3id.org/fog#")
 GOM = Namespace("https://w3id.org/gom#")
+GEO = Namespace("http://www.opengis.net/ont/geosparql#")
 DCE = Namespace("http://purl.org/dc/elements/1.1/")
 VANN = Namespace("http://purl.org/vocab/vann/")
 XSD = Namespace("http://www.w3.org/2001/XMLSchema#")
@@ -212,6 +212,7 @@ g.bind('list', LIST)
 g.bind('omg', OMG)
 g.bind('fog', FOG)
 g.bind('gom', GOM)
+g.bind('geo', GEO)
 
 g.add((asset_ref, RDF.type, OWL.Ontology))
 g.add((asset_ref, OWL.imports, ifc_ref))
@@ -638,12 +639,269 @@ FOG_PROPERTY = {
     'dae':     FOG['asCollada'],
 }
 
-def _shape_to_trimesh(shape):
+def _shape_to_trimesh(shape, fmt=None):
     verts = np.array(shape.geometry.verts).reshape(-1, 3)
     faces = np.array(shape.geometry.faces).reshape(-1, 3)
+    if fmt in ('glb', 'gltf'):
+        # IFC is Z-up (right-hand); GLTF spec requires Y-up (right-hand).
+        # Rotation -90° around X: (x, y, z) → (x, z, -y)
+        verts = np.column_stack([verts[:, 0], verts[:, 2], -verts[:, 1]])
     return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
 
-def _add_geometry_triples(entity, file_uri, fmt, mesh=None):
+
+# --- Material extraction helpers ---
+
+def _unwrap_material(mat_select):
+    """Resolve any IfcMaterialSelect variant to a single IfcMaterial (first material for sets/lists)."""
+    if mat_select.is_a('IfcMaterial'):
+        return mat_select
+    if mat_select.is_a('IfcMaterialLayerSetUsage'):
+        mat_select = mat_select.ForLayerSet
+    if mat_select.is_a('IfcMaterialLayerSet'):
+        layers = mat_select.MaterialLayers
+        return layers[0].Material if layers else None
+    if mat_select.is_a('IfcMaterialProfileSet'):
+        profiles = mat_select.MaterialProfiles
+        return profiles[0].Material if profiles else None
+    if mat_select.is_a('IfcMaterialConstituentSet'):
+        constituents = mat_select.MaterialConstituents
+        return constituents[0].Material if constituents else None
+    if mat_select.is_a('IfcMaterialList'):
+        mats = mat_select.Materials
+        return mats[0] if mats else None
+    return None
+
+
+def _get_rendering_from_styles(styles):
+    """Walk a style list and return the first IfcSurfaceStyleRendering found.
+    Handles both IFC2X3 IfcPresentationStyleAssignment wrapper and direct IFC4+ styles."""
+    for style in (styles or []):
+        if style.is_a('IfcPresentationStyleAssignment'):
+            result = _get_rendering_from_styles(style.Styles)
+            if result:
+                return result
+        elif style.is_a('IfcSurfaceStyle'):
+            for s in (style.Styles or []):
+                if s.is_a('IfcSurfaceStyleRendering'):
+                    return s
+    return None
+
+
+def _rendering_to_rgba(rendering, name):
+    c = rendering.SurfaceColour
+    t = rendering.Transparency or 0.0
+    return {'name': name, 'rgba': (c.Red, c.Green, c.Blue, 1.0 - t)}
+
+
+def _extract_material_info(entity):
+    """Return {'name': str|None, 'rgba': (R,G,B,A)} for an IFC element, or None if no colour found.
+
+    Tries two paths:
+      1. via IfcRelAssociatesMaterial → IfcMaterial → styled representation
+      2. via element's own geometry representation items
+    """
+    # Path 1: via material association
+    for rel in getattr(entity, 'HasAssociations', []):
+        if not rel.is_a('IfcRelAssociatesMaterial'):
+            continue
+        mat = _unwrap_material(rel.RelatingMaterial)
+        if not mat:
+            continue
+        for mat_rep in getattr(mat, 'HasRepresentation', []):
+            for rep in getattr(mat_rep, 'Representations', []):
+                for item in getattr(rep, 'Items', []):
+                    if item.is_a('IfcStyledItem'):
+                        rendering = _get_rendering_from_styles(item.Styles)
+                        if rendering:
+                            return _rendering_to_rgba(rendering, mat.Name)
+    # Path 2: via geometry representation items
+    for rep in getattr(getattr(entity, 'Representation', None), 'Representations', []):
+        for item in getattr(rep, 'Items', []):
+            if item.is_a('IfcStyledItem'):
+                rendering = _get_rendering_from_styles(item.Styles)
+                if rendering:
+                    return _rendering_to_rgba(rendering, None)
+    return None
+
+
+def _apply_shape_colours(mesh, shape, fmt):
+    """Apply per-face colours from ifcopenshell shape geometry to the trimesh.
+
+    Uses shape.geometry.materials (list of material objects with .diffuse / .transparency)
+    and shape.geometry.material_ids (one integer per face → index into materials).
+    Vertices are expanded per-face so each triangle gets a unique colour with no
+    bleeding at material boundaries (the standard approach for per-face colouring in GLTF).
+    Formats ifc and stl are skipped (no colour support).
+    """
+    if fmt in ('ifc', 'stl'):
+        return mesh
+    try:
+        mats = list(shape.geometry.materials)
+        mat_ids = np.array(shape.geometry.material_ids, dtype=np.int32)
+    except Exception:
+        return mesh
+    if not mats or len(mat_ids) == 0:
+        return mesh
+
+    n_faces = len(mesh.faces)
+    if len(mat_ids) != n_faces:
+        log.debug("material_ids length %d != face count %d — skipping colours", len(mat_ids), n_faces)
+        return mesh
+
+    # Build per-face RGBA colour array
+    face_colors = np.full((n_faces, 4), 128, dtype=np.uint8)
+    face_colors[:, 3] = 255
+    for mid, m in enumerate(mats):
+        mask = mat_ids == mid
+        if not mask.any():
+            continue
+        try:
+            d = m.diffuse
+            # ifcopenshell colour: .r()/.g()/.b() are callable methods
+            r, g, b = float(d.r()), float(d.g()), float(d.b())
+            t = max(0.0, min(1.0, float(m.transparency or 0.0)))
+            face_colors[mask] = [int(r*255), int(g*255), int(b*255), int((1.0-t)*255)]
+        except Exception:
+            pass
+
+    # Expand vertices per-face: each face gets its own 3 vertices so colours don't bleed
+    # across material boundaries when the renderer interpolates vertex colours.
+    verts_exp = mesh.vertices[mesh.faces.reshape(-1)]
+    faces_exp = np.arange(len(verts_exp), dtype=np.int64).reshape(-1, 3)
+    vert_colors = np.repeat(face_colors, 3, axis=0)
+
+    coloured = trimesh.Trimesh(vertices=verts_exp, faces=faces_exp, process=False)
+    coloured.visual = trimesh.visual.ColorVisuals(mesh=coloured, vertex_colors=vert_colors)
+    return coloured
+
+
+def _get_primary_material_name(shape):
+    """Return the primary material name from shape geometry (for RDF rdfs:label)."""
+    try:
+        mats = list(shape.geometry.materials)
+        if mats and mats[0].name:
+            return mats[0].name
+    except Exception:
+        pass
+    return None
+
+
+# --- Georeferencing helpers ---
+
+def _extract_map_conversion(ifc_file_obj):
+    """Return the first IfcMapConversion found in the file (IFC4+ only; returns None for IFC2X3)."""
+    if ifc_file_obj.schema.upper().startswith('IFC2X3'):
+        return None
+    try:
+        for ctx in ifc_file_obj.by_type('IfcGeometricRepresentationContext'):
+            for op in getattr(ctx, 'HasCoordinateOperation', []):
+                if op.is_a('IfcMapConversion'):
+                    return op
+    except Exception:
+        return None
+    return None
+
+
+def _extract_site_latlon(ifc_file_obj):
+    """Return (lat_deg, lon_deg, elev_m) from IfcSite.RefLatitude/RefLongitude (IFC2X3 fallback)."""
+    try:
+        for site in ifc_file_obj.by_type('IfcSite'):
+            if not site.RefLatitude or not site.RefLongitude:
+                continue
+            def _compound(c):
+                parts = list(c)
+                sign = -1 if parts[0] < 0 else 1
+                v = abs(parts[0]) + abs(parts[1]) / 60.0 + abs(parts[2]) / 3600.0
+                if len(parts) > 3:
+                    v += abs(parts[3]) / 3_600_000_000.0
+                return sign * v
+            lat  = _compound(site.RefLatitude)
+            lon  = _compound(site.RefLongitude)
+            elev = float(site.RefElevation) if site.RefElevation else 0.0
+            return lat, lon, elev
+    except Exception:
+        return None
+    return None
+
+
+def _add_geospatial_triples(ifc_file_obj, world_cs_uri):
+    """Add GeoSPARQL location + GOM map-CS transformation when georeferencing is present.
+
+    IFC4+: reads IfcMapConversion → EPSG projected CRS, builds 4×4 affine matrix.
+    IFC2X3: reads IfcSite.RefLatitude/RefLongitude → WGS84 POINT (no matrix; no rotation/scale).
+    geo:Feature attaches to IfcSite (spatial entity) falling back to IfcProject.
+    """
+    sites = ifc_file_obj.by_type('IfcSite')
+    if sites:
+        anchor = sites[0]
+    else:
+        projects = ifc_file_obj.by_type('IfcProject')
+        if not projects:
+            return
+        anchor = projects[0]
+    anchor_uri = INST[anchor.is_a() + '_' + str(anchor.id())]
+
+    map_conv = _extract_map_conversion(ifc_file_obj)
+    if map_conv:
+        eastings  = float(map_conv.Eastings)
+        northings = float(map_conv.Northings)
+        height    = float(map_conv.OrthogonalHeight or 0.0)
+        xa        = float(map_conv.XAxisAbscissa or 1.0)
+        xo        = float(map_conv.XAxisOrdinate or 0.0)
+        scale     = float(map_conv.Scale or 1.0)
+
+        crs_name = getattr(getattr(map_conv, 'TargetCRS', None), 'Name', None)
+        if crs_name and crs_name.upper().startswith('EPSG:'):
+            epsg = crs_name.split(':', 1)[1]
+            crs_uri_str = f'http://www.opengis.net/def/crs/EPSG/0/{epsg}'
+        else:
+            crs_uri_str = 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
+
+        wkt = f'<{crs_uri_str}> POINT Z ({eastings} {northings} {height})'
+        origin_uri = INST['projectOriginGeom']
+        g.add((anchor_uri, RDF.type,        GEO.Feature))
+        g.add((anchor_uri, GEO.hasGeometry, origin_uri))
+        g.add((origin_uri, RDF.type,        GEO.Geometry))
+        g.add((origin_uri, GEO.asWKT,       Literal(wkt, datatype=GEO.wktLiteral)))
+
+        # 4×4 affine from IFC local → map projected CRS (row-major):
+        # [xa*s  -xo*s  0  Eastings ]
+        # [xo*s   xa*s  0  Northings]
+        # [0      0     s  Height   ]
+        # [0      0     0  1        ]
+        s = scale
+        mat = (f'{xa*s:.6f} {-xo*s:.6f} 0.0 {eastings:.3f}  '
+               f'{xo*s:.6f} {xa*s:.6f} 0.0 {northings:.3f}  '
+               f'0.0 0.0 {s:.6f} {height:.3f}  '
+               f'0.0 0.0 0.0 1.0')
+        map_cs_uri    = INST['mapCoordSys']
+        transform_uri = INST['ifcToMapTransform']
+        g.add((map_cs_uri,    RDF.type,                          GOM.CartesianCoordinateSystem))
+        if crs_name:
+            g.add((map_cs_uri, RDFS.label, Literal(crs_name)))
+        g.add((transform_uri, RDF.type,                          GOM.AffineCoordinateSystemTransformation))
+        g.add((transform_uri, GOM.fromCartesianCoordinateSystem, world_cs_uri))
+        g.add((transform_uri, GOM.toCartesianCoordinateSystem,   map_cs_uri))
+        g.add((transform_uri, GOM.hasTransformationMatrix,
+               Literal(mat, datatype=GOM.rowMajorArray)))
+        log.info("Georeferencing (IFC4+): IfcMapConversion → %s  origin (%.3f, %.3f, %.3f)",
+                 crs_name or 'CRS84', eastings, northings, height)
+    else:
+        latlon = _extract_site_latlon(ifc_file_obj)
+        if latlon:
+            lat, lon, elev = latlon
+            crs_uri_str = 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
+            wkt = f'<{crs_uri_str}> POINT Z ({lon:.8f} {lat:.8f} {elev:.3f})'
+            origin_uri = INST['projectOriginGeom']
+            g.add((anchor_uri, RDF.type,        GEO.Feature))
+            g.add((anchor_uri, GEO.hasGeometry, origin_uri))
+            g.add((origin_uri, RDF.type,        GEO.Geometry))
+            g.add((origin_uri, GEO.asWKT,       Literal(wkt, datatype=GEO.wktLiteral)))
+            log.info("Georeferencing (IFC2X3): IfcSite lat/lon → WGS84  (%.6f°, %.6f°, %.1f m)",
+                     lat, lon, elev)
+
+
+def _add_geometry_triples(entity, file_uri, fmt, mesh=None, mat_info=None, world_cs_uri=None):
     """Write OMG/FOG/GOM triples for one entity using the three-node OMG pattern."""
     fog_prop       = FOG_PROPERTY.get(fmt, FOG['asIfc'])
     entity_uri     = INST[entity.is_a() + '_' + str(entity.id())]
@@ -659,6 +917,12 @@ def _add_geometry_triples(entity, file_uri, fmt, mesh=None):
     if hasattr(entity, 'GlobalId'):
         g.add((geom_uri, FOG['hasIfcId-guid'], Literal(entity.GlobalId, datatype=XSD.string)))
 
+    if mat_info and mat_info.get('name'):
+        g.add((geom_uri, RDFS.label, Literal(mat_info['name'])))
+
+    if world_cs_uri is not None:
+        g.add((geom_uri, GOM.hasCoordinateSystem, world_cs_uri))
+
     if mesh is not None:
         g.add((geom_state_uri, GOM.hasVertices,
                Literal(len(mesh.vertices), datatype=XSD.nonNegativeInteger)))
@@ -668,68 +932,69 @@ def _add_geometry_triples(entity, file_uri, fmt, mesh=None):
             g.add((geom_state_uri, GOM.hasFileSize,
                    Literal(os.path.getsize(file_uri), datatype=XSD.nonNegativeInteger)))
 
-def _run_external_converter(converter, args):
-    cmd = [converter] + args
-    log.debug("External geometry converter: %s", ' '.join(cmd))
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if r.returncode != 0:
-            log.warning("Converter exited %d: %s", r.returncode, r.stderr.strip())
-    except FileNotFoundError:
-        log.error("Geometry converter '%s' not found — skipping file export", converter)
-    except subprocess.TimeoutExpired:
-        log.warning("Geometry converter timed out")
-
 def export_geometry_batch(ifc_file_obj, ifc_path, entities_with_repr,
-                          fmt, output_path, output_name, converter):
+                          fmt, output_path, output_name,
+                          apply_materials=False, world_cs_uri=None):
     """Export all element geometry to one file; write RDF triples for each entity."""
     os.makedirs(output_path, exist_ok=True)
     out_file = os.path.join(output_path, output_name + '.' + fmt)
+    _name_cache = {}   # entity_id → primary material name for RDF label
 
     if fmt == 'ifc':
         out_file = ifc_path       # the IFC file itself is the geometry source
-    elif converter:
-        _run_external_converter(converter, [ifc_path, out_file])
     else:
         scene = trimesh.Scene()
         it = ifcopenshell.geom.iterator(_geom_settings, ifc_file_obj)
         if it.initialize():
             while True:
                 shape = it.get()
-                mesh = _shape_to_trimesh(shape)
+                mesh = _shape_to_trimesh(shape, fmt)   # axis correction applied here
+                if apply_materials:
+                    mesh = _apply_shape_colours(mesh, shape, fmt)
+                    name = _get_primary_material_name(shape)
+                    if name:
+                        _name_cache[shape.id] = name
                 scene.add_geometry(mesh, node_name=str(shape.id))
                 if not it.next():
                     break
         scene.export(out_file)
 
     for entity in entities_with_repr:
-        _add_geometry_triples(entity, out_file, fmt)
+        name = _name_cache.get(entity.id())
+        _add_geometry_triples(entity, out_file, fmt,
+                              mat_info={'name': name} if name else None,
+                              world_cs_uri=world_cs_uri)
     log.info("Geometry (batch): %d entities → %s", len(entities_with_repr), out_file)
 
-def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path, converter):
+def export_geometry_split(ifc_file_obj, ifc_path, entity, fmt, output_path,
+                          apply_materials=False, world_cs_uri=None):
     """Export geometry for one entity to its own file; write RDF triples."""
     if not hasattr(entity, 'GlobalId'):
         return
     os.makedirs(output_path, exist_ok=True)
     out_file = os.path.join(output_path, entity.GlobalId + '.' + fmt)
     mesh = None
+    mat_info = None
 
     if fmt == 'ifc':
         out_file = ifc_path
-    elif converter:
-        _run_external_converter(converter, [ifc_path, out_file,
-                                            '--include', 'attribute', 'GlobalId', entity.GlobalId])
     else:
         try:
             shape = ifcopenshell.geom.create_shape(_geom_settings, entity)
-            mesh = _shape_to_trimesh(shape)
+            mesh = _shape_to_trimesh(shape, fmt)   # axis correction applied here
+            if apply_materials:
+                mesh = _apply_shape_colours(mesh, shape, fmt)
+                name = _get_primary_material_name(shape)
+                if name:
+                    mat_info = {'name': name}
             mesh.export(out_file)
         except Exception as e:
             log.warning("Geometry extraction failed for %s#%d: %s",
                         entity.is_a(), entity.id(), e)
             return
 
-    _add_geometry_triples(entity, out_file, fmt, mesh=mesh)
+    _add_geometry_triples(entity, out_file, fmt, mesh=mesh, mat_info=mat_info,
+                          world_cs_uri=world_cs_uri)
 
 
 # --- Main conversion loop ---
@@ -762,18 +1027,25 @@ _geom_cfg  = params['geometry-output']
 _geom_fmt  = _geom_cfg['output-format']
 _geom_path = _geom_cfg['output-path']
 _geom_split = _geom_cfg.get('split', False)
-_geom_conv  = _geom_cfg.get('converter', '')
+_geom_mat   = _geom_cfg.get('apply-materials', False)
 
 if _geom_cfg['convert'] and not _geom_cfg['in-graph']:
+    _world_cs_uri = INST['worldCoordSys']
+    g.add((_world_cs_uri, RDF.type,   GOM.CartesianCoordinateSystem))
+    g.add((_world_cs_uri, RDFS.label, Literal('IFC Project Coordinate System')))
+    _add_geospatial_triples(file, _world_cs_uri)
+
     _repr_entities = [e for e in file
                       if e.is_a() not in avoid
                       and hasattr(e, 'Representation') and e.Representation]
     if _geom_split:
         for _e in _repr_entities:
-            export_geometry_split(file, file_path, _e, _geom_fmt, _geom_path, _geom_conv)
+            export_geometry_split(file, file_path, _e, _geom_fmt, _geom_path,
+                                  apply_materials=_geom_mat, world_cs_uri=_world_cs_uri)
     else:
         export_geometry_batch(file, file_path, _repr_entities,
-                              _geom_fmt, _geom_path, asset_name, _geom_conv)
+                              _geom_fmt, _geom_path, asset_name,
+                              apply_materials=_geom_mat, world_cs_uri=_world_cs_uri)
 
 # --- Serialise ---
 g.serialize(destination=save_path + '.' + output_format, format='turtle')

@@ -11,8 +11,8 @@
         "in-graph": false,
         "output-format": "glb",
         "split": false,
-        "output-path": "../tests/",
-        "converter": ""
+        "apply-materials": false,
+        "output-path": "../tests/"
     },
     "filters": {
         "resource": [],
